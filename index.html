@@ -64,7 +64,7 @@
     <div id="map"></div>
 
     <div class="panel">
-        <h2>Buscar</h2>
+        <h2>Consulta de Base de Datos (Conexión Directa e Ilimitada por CSV)</h2>
         <input type="text" id="buscador" class="search-box" placeholder="🔍 Filtra lanzamientos por nombre, país, ciudad, encargado, fase...">
         
         <div class="table-container">
@@ -86,13 +86,11 @@
 </div>
 
 <script>
-    // Enlace directo a tu Google Sheets (Formato CSV)
     const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTnUTrS9cjDRVmtwOzZbvwHBA7RHjiRO0TRLfSq8xmD3-RE9UNl2qq1epxKS0-Ogw-VVDtaTBBgviLB/pub?output=csv";
 
     let equipos = [];
     const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
 
-    // Inicialización del mapa enfocado globalmente
     const map = L.map('map').setView([26.0, -25.0], 3);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
     const marcadoresGroup = L.layerGroup().addTo(map);
@@ -108,30 +106,61 @@
         }
     }
 
-    // Convertidor inteligente adaptable a comas (,) y punto y coma (;)
+    // Lector de CSV de alta seguridad: Soporta celdas vacías, comas internas y comillas
     function procesarCSV(textoCSV) {
-        const lineas = textoCSV.split(/\r?\n/).filter(line => line.trim() !== "");
+        const lineas = [];
+        let filaActual = [];
+        let celdaActual = '';
+        let dentroDeComillas = false;
+        
+        // Detectar si el archivo usa coma o punto y coma analizando la primera línea
+        const primeraLinea = textoCSV.split('\n')[0];
+        const separador = (primeraLinea.split(';').length > primeraLinea.split(',').length) ? ';' : ',';
+
+        for (let i = 0; i < textoCSV.length; i++) {
+            const char = textoCSV[i];
+            const siguienteChar = textoCSV[i + 1];
+
+            if (char === '"') {
+                if (dentroDeComillas && siguienteChar === '"') {
+                    celdaActual += '"';
+                    i++;
+                } else {
+                    dentroDeComillas = !dentroDeComillas;
+                }
+            } else if (char === separador && !dentroDeComillas) {
+                filaActual.push(celdaActual.trim());
+                celdaActual = '';
+            } else if ((char === '\r' || char === '\n') && !dentroDeComillas) {
+                if (char === '\r' && siguienteChar === '\n') i++;
+                filaActual.push(celdaActual.trim());
+                lineas.push(filaActual);
+                filaActual = [];
+                celdaActual = '';
+            } else {
+                celdaActual += char;
+            }
+        }
+        if (celdaActual || filaActual.length > 0) {
+            filaActual.push(celdaActual.trim());
+            lineas.push(filaActual);
+        }
+
         if (lineas.length === 0) return [];
 
-        // Determina el separador correcto dinámicamente buscando cuál predomina en la primera línea
-        const separador = (lineas[0].split(';').length > lineas[0].split(',').length) ? ';' : ',';
-
-        // Extrae cabeceras limpias en minúsculas
-        const encabezados = lineas[0].split(separador).map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
-        
+        // Mapear cabeceras en minúsculas
+        const encabezados = lineas[0].map(h => h.toLowerCase());
         const resultado = [];
+
         for (let i = 1; i < lineas.length; i++) {
-            let lineaActual = lineas[i];
+            const fila = lineas[i];
+            if (fila.length === 0 || (fila.length === 1 && fila[0] === "")) continue;
             
-            // Separación de celdas respetando el delimitador detectado
-            const celdas = lineaActual.split(separador);
-            const filaObjeto = {};
-            
+            const objeto = {};
             encabezados.forEach((encabezado, index) => {
-                let valor = celdas[index] ? celdas[index].trim().replace(/^"|"$/g, '') : '';
-                filaObjeto[encabezado] = valor;
+                objeto[encabezado] = fila[index] || '';
             });
-            resultado.push(filaObjeto);
+            resultado.push(objeto);
         }
         return resultado;
     }
@@ -147,7 +176,6 @@
             if(!eq.nombre) return;
             const fase = obtenerInfoFase(eq);
             
-            // 1. Añadir a la tabla de datos inferior
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><strong>${eq.nombre}</strong></td>
@@ -159,7 +187,6 @@
             `;
             tbody.appendChild(tr);
 
-            // 2. Extraer y limpiar coordenadas manuales dinámicamente
             let rawLat = eq.lat || eq.latitud || null;
             let rawLng = eq.lng || eq.longitud || null;
 
@@ -196,7 +223,6 @@
 
     async function cargarDatosDesdeNube() {
         try {
-            // Se le concatena un parámetro de tiempo dinámico para destruir el caché local en cada recarga
             const urlFresca = `${CSV_URL}&_nocache=${new Date().getTime()}`;
             const res = await fetch(urlFresca);
             const textoCSV = await res.text();
