@@ -128,6 +128,7 @@
                     celdaActual += '"';
                     i++;
                 } else {
+                    insideQuote = !dentroDeComillas;
                     dentroDeComillas = !dentroDeComillas;
                 }
             } else if (char === separador && !dentroDeComillas) {
@@ -267,99 +268,36 @@
         });
     }
 
-    // 🛠️ LÓGICA DE DETECCIÓN DINÁMICA: Basada en la longitud de dígitos enteros (Inmune a formatos corruptos de Sheets)
-    function limpiarCoordenada(valorStr) {
+    // 🛠️ REPARACIÓN MATEMÁTICA GEOGRÁFICA DEFINITIVA (Málaga, Madrid, Getafe y México funcionando juntos)
+    function limpiarCoordenada(valorStr, esLatitud) {
         if (!valorStr) return null;
         let s = valorStr.toString().trim();
         if (s === "" || s === "0") return null;
 
         let esNegativo = s.startsWith('-');
+        // Dejar solo los números absolutos y quitar los puntos molestos de Google
+        let textoLimpio = s.replace('-', '').replace(/\./g, '');
         
-        // Extraer la parte entera original antes del primer punto para saber cómo la formateó Sheets
-        let partesOriginales = s.replace('-', '').split('.');
-        let digitosEnterosOriginales = partesOriginales[0].length;
+        let valorBase = parseFloat(textoLimpio);
+        if (isNaN(valorBase)) return null;
 
-        // Quitar absolutamente todo lo que no sea un número limpio
-        let limpio = s.replace(/[^0-9]/g, '');
-        if (limpio.length < 2) return null;
+        // Establecer el límite físico real de la tierra para saber si el punto está roto
+        let limiteTierra = esLatitud ? 90.0 : 180.0;
 
-        let resultadoFlotante;
-
-        // Si la parte entera original tenía 3 dígitos (ej: 371.773 -> 37.1773 o 206.597 -> 20.6597)
-        if (digitosEnterosOriginales === 3) {
-            resultadoFlotante = parseFloat(limpio.substring(0, 2) + '.' + limpio.substring(2));
-        } 
-        // Si tenía 4 dígitos en la parte entera (ej: México Longitud -1.033.496 -> que al quitar el menos son 4 enteros "1033")
-        else if (digitosEnterosOriginales === 4 || limpio.length >= 7 && (limpio.startsWith('102') || limpio.startsWith('103') || limpio.startsWith('99'))) {
-            resultadoFlotante = parseFloat(limpio.substring(0, 3) + '.' + limpio.substring(3));
-        } 
-        // Si ya venía bien formateado con 1 o 2 enteros nativos (ej: -3.5986 o 2.8214)
-        else {
-            resultadoFlotante = parseFloat(parseFloat(valorStr.replace(',', '.')).toFixed(6));
-            return isNaN(resultadoFlotante) ? null : resultadoFlotante;
+        // Bucle inteligente: Si el número supera los límites del planeta, lo encogemos moviendo la coma decimal hacia atrás
+        while (valorBase > limiteTierra) {
+            valorBase = valorBase / 10;
         }
 
-        if (esNegativo) resultadoFlotante = -resultadoFlotante;
-        return isNaN(resultadoFlotante) ? null : resultadoFlotante;
+        // Si originalmente era negativo (como México entero o las longitudes de España), restauramos el signo
+        if (esNegativo) valorBase = -valorBase;
+
+        // Forzar 5 decimales de precisión cartográfica limpia
+        return parseFloat(valorBase.toFixed(5));
     }
 
     async function cargarDatosDesdeNube() {
         try {
             const urlFresca = `${CSV_URL}&_nocache=${new Date().getTime()}`;
             const res = await fetch(urlFresca);
-            const textoCSV = await res.text();
-            
-            const datosLimpios = procesarCSV(textoCSV);
-            
-            equipos = datosLimpios.map(eq => {
-                if(!eq.nombre) return eq;
-
-                let fechaMostrar = eq.fecha || eq.inicio || '';
-                let integrantesMostrar = eq.integrantes;
-
-                if (integrantesMostrar && integrantesMostrar.includes('/')) {
-                    fechaMostrar = integrantesMostrar;
-                    integrantesMostrar = 0;
-                } else {
-                    integrantesMostrar = (integrantesMostrar !== undefined && integrantesMostrar !== '') ? parseInt(integrantesMostrar) : 0;
-                    if (isNaN(integrantesMostrar)) integrantesMostrar = 0;
-                }
-
-                let rawLat = eq.lat || eq.latitud || eq.Latitud || null;
-                let rawLng = eq.lng || eq.longitud || eq.Longitud || null;
-
-                let lat = limpiarCoordenada(rawLat);
-                let lng = limpiarCoordenada(rawLng);
-
-                const objetoMapeado = {
-                    nombre: eq.nombre,
-                    ciudad: eq.ciudad || '',
-                    pais: eq.pais || '',
-                    account: eq.account || '',
-                    city: eq.city || '',
-                    fecha: fechaMostrar,
-                    integrantes: integrantesMostrar,
-                    lanzado: eq.lanzado || '',
-                    lat: lat,
-                    lng: lng
-                };
-
-                const faseInfo = obtenerInfoFase(objetoMapeado);
-                objetoMapeado.fase_num = faseInfo.num;
-
-                return objetoMapeado;
-            });
-
-            actualizarIconosOrden();
-            filtrarYRenderizar();
-
-        } catch (err) {
-            console.error("Error al sincronizar datos desde Google Sheets:", err);
-        }
-    }
-
-    document.getElementById('buscador').addEventListener('input', filtrarYRenderizar);
-    cargarDatosDesdeNube();
-</script>
-</body>
-</html>
+            const textoCSV = await res
