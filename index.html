@@ -95,7 +95,8 @@
     let direccionOrden = 'asc'; 
     const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
 
-    const map = L.map('map').setView([24.0, -40.0], 3);
+    // Inicializar mapa interactivo centrado para ver tanto España como México adecuadamente
+    const map = L.map('map').setView([26.0, -35.0], 3);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
     const marcadoresGroup = L.layerGroup().addTo(map);
 
@@ -267,28 +268,50 @@
         });
     }
 
-    // 🛠️ FUNCIÓN ESPECIAL: Corrige el formato roto de coordenadas de Google Sheets (ej: 371.773 -> 37.1773)
+    // 🛠️ REPARACIÓN DEFINITIVA: Limpia el formato de Google Sheets sin romper la posición decimal original
     function limpiarCoordenada(valorStr) {
         if (!valorStr) return null;
-        
-        // Quitar espacios y unificar el texto
         let s = valorStr.toString().trim();
         if (s === "" || s === "0") return null;
 
-        // Comprobar si es negativo
         let esNegativo = s.startsWith('-');
-        // Dejar únicamente los dígitos numéricos libres
-        let digitos = s.replace(/[^0-9]/g, '');
         
-        if (digitos.length < 3) return null;
+        // Quitar el signo negativo momentáneamente si existe y remover espacios
+        s = s.replace('-', '');
 
-        // Regla matemática de reubicación: forzar siempre 2 dígitos enteros iniciales reales
-        let parteEntera = digitos.substring(0, 2);
-        let parteDecimal = digitos.substring(2);
-        
-        let resultadoFlotante = parseFloat(parteEntera + '.' + parteDecimal);
-        
-        // Si originalmente era negativo (como en México), le devolvemos el signo
+        // Contar cuántos puntos decimales/miles tiene la cadena original
+        let conteoPuntos = (s.match(/\./g) || []).length;
+
+        let resultadoFlotante;
+
+        if (conteoPuntos === 1) {
+            // Caso estándar de España (ej: 371.773 -> 37.1773) o México Lat (ej: 206.597 -> 20.6597)
+            // Evaluamos la longitud de los dígitos. Las coordenadas reales tienen 2 o 3 enteros normalmente antes de mutar.
+            let limpio = s.replace('.', '');
+            
+            if (limpio.startsWith('37') || limpio.startsWith('38') || limpio.startsWith('39') || limpio.startsWith('40') || limpio.startsWith('41') || limpio.startsWith('42') || limpio.startsWith('43')) {
+                // Coordenadas latitud España (ej. 37.xxxx)
+                resultadoFlotante = parseFloat(limpio.substring(0,2) + '.' + limpio.substring(2));
+            } else if (limpio.startsWith('20') || limpio.startsWith('19') || limpio.startsWith('21')) {
+                // Coordenadas latitud México (ej. 20.xxxx)
+                resultadoFlotante = parseFloat(limpio.substring(0,2) + '.' + limpio.substring(2));
+            } else if (limpio.startsWith('35') || limpio.startsWith('3') || limpio.startsWith('4') || limpio.startsWith('5') || limpio.startsWith('6')) {
+                // Longitudes de España bajas (ej. -3.xxxx o -5.xxxx)
+                resultadoFlotante = parseFloat(limpio.substring(0,1) + '.' + limpio.substring(1));
+            } else {
+                // Por defecto si no cumple patrones geográficos evidentes, dividimos entre 10000 para corregir el punto de miles
+                resultadoFlotante = parseFloat(limpio) / 10000;
+            }
+        } else if (conteoPuntos > 1) {
+            // Caso extremo detectado en México Longitud (ej: 1.033.496 -> debe ser 103.3496)
+            let limpio = s.replace(/\./g, ''); // Quita todos los puntos
+            // Las longitudes de México empiezan por 103 o 102 (3 dígitos enteros)
+            resultadoFlotante = parseFloat(limpio.substring(0,3) + '.' + limpio.substring(3));
+        } else {
+            // Si viene ya limpio sin puntos anormales
+            resultadoFlotante = parseFloat(s);
+        }
+
         if (esNegativo) resultadoFlotante = -resultadoFlotante;
 
         return isNaN(resultadoFlotante) ? null : resultadoFlotante;
@@ -316,11 +339,9 @@
                     if (isNaN(integrantesMostrar)) integrantesMostrar = 0;
                 }
 
-                // Extraemos las propiedades dinámicas de tu Google Sheet
                 let rawLat = eq.lat || eq.latitud || eq.Latitud || null;
                 let rawLng = eq.lng || eq.longitud || eq.Longitud || null;
 
-                // Enviarlas a reparar al corrector de formato numérico
                 let lat = limpiarCoordenada(rawLat);
                 let lng = limpiarCoordenada(rawLng);
 
@@ -354,7 +375,5 @@
     document.getElementById('buscador').addEventListener('input', filtrarYRenderizar);
     cargarDatosDesdeNube();
 </script>
-</body>
-</html>
 </body>
 </html>
