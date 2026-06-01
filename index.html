@@ -268,36 +268,74 @@
         });
     }
 
-    // 🛠️ REPARACIÓN MATEMÁTICA GEOGRÁFICA DEFINITIVA (Málaga, Madrid, Getafe y México funcionando juntos)
-    function limpiarCoordenada(valorStr, esLatitud) {
+    // 🛠️ LÓGICA DE LIMPIEZA NATIVA ULTRA SIMPLIFICADA
+    function limpiarCoordenada(valorStr) {
         if (!valorStr) return null;
-        let s = valorStr.toString().trim();
+        // Reemplaza comas por puntos por compatibilidad de configuraciones regionales latinas
+        let s = valorStr.toString().trim().replace(',', '.');
         if (s === "" || s === "0") return null;
-
-        let esNegativo = s.startsWith('-');
-        // Dejar solo los números absolutos y quitar los puntos molestos de Google
-        let textoLimpio = s.replace('-', '').replace(/\./g, '');
         
-        let valorBase = parseFloat(textoLimpio);
-        if (isNaN(valorBase)) return null;
-
-        // Establecer el límite físico real de la tierra para saber si el punto está roto
-        let limiteTierra = esLatitud ? 90.0 : 180.0;
-
-        // Bucle inteligente: Si el número supera los límites del planeta, lo encogemos moviendo la coma decimal hacia atrás
-        while (valorBase > limiteTierra) {
-            valorBase = valorBase / 10;
-        }
-
-        // Si originalmente era negativo (como México entero o las longitudes de España), restauramos el signo
-        if (esNegativo) valorBase = -valorBase;
-
-        // Forzar 5 decimales de precisión cartográfica limpia
-        return parseFloat(valorBase.toFixed(5));
+        let numero = parseFloat(s);
+        return isNaN(numero) ? null : numero;
     }
 
     async function cargarDatosDesdeNube() {
         try {
             const urlFresca = `${CSV_URL}&_nocache=${new Date().getTime()}`;
             const res = await fetch(urlFresca);
-            const textoCSV = await res
+            const textoCSV = await res.text();
+            
+            const datosLimpios = procesarCSV(textoCSV);
+            
+            equipos = datosLimpios.map(eq => {
+                if(!eq.nombre) return eq;
+
+                let fechaMostrar = eq.fecha || eq.inicio || '';
+                let integrantesMostrar = eq.integrantes;
+
+                if (integrantesMostrar && integrantesMostrar.includes('/')) {
+                    fechaMostrar = integrantesMostrar;
+                    integrantesMostrar = 0;
+                } else {
+                    integrantesMostrar = (integrantesMostrar !== undefined && integrantesMostrar !== '') ? parseInt(integrantesMostrar) : 0;
+                    if (isNaN(integrantesMostrar)) integrantesMostrar = 0;
+                }
+
+                let rawLat = eq.lat || eq.latitud || eq.Latitud || null;
+                let rawLng = eq.lng || eq.longitud || eq.Longitud || null;
+
+                let lat = limpiarCoordenada(rawLat);
+                let lng = limpiarCoordenada(rawLng);
+
+                const objetoMapeado = {
+                    nombre: eq.nombre,
+                    ciudad: eq.ciudad || '',
+                    pais: eq.pais || '',
+                    account: eq.account || '',
+                    city: eq.city || '',
+                    fecha: fechaMostrar,
+                    integrantes: integrantesMostrar,
+                    lanzado: eq.lanzado || '',
+                    lat: lat,
+                    lng: lng
+                };
+
+                const faseInfo = obtenerInfoFase(objetoMapeado);
+                objetoMapeado.fase_num = faseInfo.num;
+
+                return objetoMapeado;
+            });
+
+            actualizarIconosOrden();
+            filtrarYRenderizar();
+
+        } catch (err) {
+            console.error("Error al sincronizar datos desde Google Sheets:", err);
+        }
+    }
+
+    document.getElementById('buscador').addEventListener('input', filtrarYRenderizar);
+    cargarDatosDesdeNube();
+</script>
+</body>
+</html>
