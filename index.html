@@ -87,4 +87,130 @@
 
 <script>
     // Enlace directo a tu Google Sheets (Formato CSV)
-    const CSV_URL = "
+    const CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTnUTrS9cjDRVmtwOzZbvwHBA7RHjiRO0TRLfSq8xmD3-RE9UNl2qq1epxKS0-Ogw-VVDtaTBBgviLB/pub?output=csv";
+
+    let equipos = [];
+    const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
+
+    // Inicialización del mapa enfocado globalmente
+    const map = L.map('map').setView([26.0, -25.0], 3);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+    const marcadoresGroup = L.layerGroup().addTo(map);
+
+    function obtenerInfoFase(eq) {
+        const ints = parseInt(eq.integrantes) || 0;
+        if (eq.lanzado && eq.lanzado.toLowerCase() === "no" || ints === 0) {
+            return { texto: "Fase 0", color: coloresFase.f0, class: "f0" };
+        } else if (ints > 0 && ints <= 15) {
+            return { texto: "Fase 1", color: coloresFase.f1, class: "f1" };
+        } else {
+            return { texto: "Fase 2", color: coloresFase.f2, class: "f2" };
+        }
+    }
+
+    // Convertidor inteligente adaptable a comas (,) y punto y coma (;)
+    function procesarCSV(textoCSV) {
+        const lineas = textoCSV.split(/\r?\n/).filter(line => line.trim() !== "");
+        if (lineas.length === 0) return [];
+
+        // Determina el separador correcto dinámicamente buscando cuál predomina en la primera línea
+        const separador = (lineas[0].split(';').length > lineas[0].split(',').length) ? ';' : ',';
+
+        // Extrae cabeceras limpias en minúsculas
+        const encabezados = lineas[0].split(separador).map(h => h.trim().toLowerCase().replace(/^"|"$/g, ''));
+        
+        const resultado = [];
+        for (let i = 1; i < lineas.length; i++) {
+            let lineaActual = lineas[i];
+            
+            // Separación de celdas respetando el delimitador detectado
+            const celdas = lineaActual.split(separador);
+            const filaObjeto = {};
+            
+            encabezados.forEach((encabezado, index) => {
+                let valor = celdas[index] ? celdas[index].trim().replace(/^"|"$/g, '') : '';
+                filaObjeto[encabezado] = valor;
+            });
+            resultado.push(filaObjeto);
+        }
+        return resultado;
+    }
+
+    function renderizarTodo(lista) {
+        const tbody = document.getElementById('tbody-equipos');
+        tbody.innerHTML = '';
+        marcadoresGroup.clearLayers();
+        
+        if (!lista || lista.length === 0) return;
+
+        lista.forEach(eq => {
+            if(!eq.nombre) return;
+            const fase = obtenerInfoFase(eq);
+            
+            // 1. Añadir a la tabla de datos inferior
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${eq.nombre}</strong></td>
+                <td>${eq.ciudad || ''} <br><small style="color:#666;">${eq.pais || ''}</small></td>
+                <td><small>A:</small> ${eq.account || ''}<br><small>C:</small> ${eq.city || ''}</td>
+                <td>${eq.fecha || ''}</td>
+                <td style="text-align:center; font-weight:bold;">${eq.integrantes || 0}</td>
+                <td><span class="badge-fase ${fase.class}">${fase.texto}</span></td>
+            `;
+            tbody.appendChild(tr);
+
+            // 2. Extraer y limpiar coordenadas manuales dinámicamente
+            let rawLat = eq.lat || eq.latitud || null;
+            let rawLng = eq.lng || eq.longitud || null;
+
+            if(rawLat && rawLng) {
+                let lat = parseFloat(rawLat.toString().replace(',', '.').trim());
+                let lng = parseFloat(rawLng.toString().replace(',', '.').trim());
+
+                if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                    const icon = L.divIcon({
+                        html: `<div class="chincheta-mapa" style="background-color: ${fase.color};"></div>`,
+                        className: '', iconSize: [16, 16], iconAnchor: [8, 8]
+                    });
+
+                    const m = L.marker([lat, lng], { icon: icon })
+                        .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}, ${eq.pais || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
+                    marcadoresGroup.addLayer(m);
+                }
+            }
+        });
+    }
+
+    function filtrarEquipos() {
+        const query = document.getElementById('buscador').value.toLowerCase().trim();
+        const filtrados = equipos.filter(eq => {
+            if(!eq.nombre) return false;
+            const faseInfo = obtenerInfoFase(eq);
+            const miembros = eq.integrantes ? eq.integrantes.toString() : '0';
+            
+            return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, miembros, faseInfo.texto]
+                .join(' ').toLowerCase().includes(query);
+        });
+        renderizarTodo(filtrados);
+    }
+
+    async function cargarDatosDesdeNube() {
+        try {
+            // Se le concatena un parámetro de tiempo dinámico para destruir el caché local en cada recarga
+            const urlFresca = `${CSV_URL}&_nocache=${new Date().getTime()}`;
+            const res = await fetch(urlFresca);
+            const textoCSV = await res.text();
+            
+            equipos = procesarCSV(textoCSV);
+            renderizarTodo(equipos);
+
+        } catch (err) {
+            console.error("Error al sincronizar datos desde Google Sheets:", err);
+        }
+    }
+
+    document.getElementById('buscador').addEventListener('input', filtrarEquipos);
+    cargarDatosDesdeNube();
+</script>
+</body>
+</html>
