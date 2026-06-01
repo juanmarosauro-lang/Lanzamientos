@@ -106,14 +106,12 @@
         }
     }
 
-    // Lector de CSV de alta seguridad: Soporta celdas vacías, comas internas y comillas
     function procesarCSV(textoCSV) {
         const lineas = [];
         let filaActual = [];
         let celdaActual = '';
         let dentroDeComillas = false;
         
-        // Detectar si el archivo usa coma o punto y coma analizando la primera línea
         const primeraLinea = textoCSV.split('\n')[0];
         const separador = (primeraLinea.split(';').length > primeraLinea.split(',').length) ? ';' : ',';
 
@@ -148,7 +146,6 @@
 
         if (lineas.length === 0) return [];
 
-        // Mapear cabeceras en minúsculas
         const encabezados = lineas[0].map(h => h.toLowerCase());
         const resultado = [];
 
@@ -158,7 +155,7 @@
             
             const objeto = {};
             encabezados.forEach((encabezado, index) => {
-                objeto[encabezado] = fila[index] || '';
+                objeto[encabezado] = fila[index] !== undefined ? fila[index] : '';
             });
             resultado.push(objeto);
         }
@@ -176,13 +173,21 @@
             if(!eq.nombre) return;
             const fase = obtenerInfoFase(eq);
             
+            // Validación estricta: Si el valor es exactamente "0" o un número 0, lo mantiene. Si es null/undefined/vacío, pone texto vacío.
+            const ciudadMostrar = (eq.ciudad !== undefined && eq.ciudad !== '') ? eq.ciudad : '';
+            const paisMostrar = (eq.pais !== undefined && eq.pais !== '') ? eq.pais : '';
+            const accountMostrar = (eq.account !== undefined && eq.account !== '') ? eq.account : '';
+            const cityMostrar = (eq.city !== undefined && eq.city !== '') ? eq.city : '';
+            const fechaMostrar = (eq.fecha !== undefined && eq.fecha !== '') ? eq.fecha : '';
+            const integrantesMostrar = (eq.integrantes !== undefined && eq.integrantes !== '') ? eq.integrantes : 0;
+            
             const tr = document.createElement('tr');
             tr.innerHTML = `
                 <td><strong>${eq.nombre}</strong></td>
-                <td>${eq.ciudad || ''} <br><small style="color:#666;">${eq.pais || ''}</small></td>
-                <td><small>A:</small> ${eq.account || ''}<br><small>C:</small> ${eq.city || ''}</td>
-                <td>${eq.fecha || ''}</td>
-                <td style="text-align:center; font-weight:bold;">${eq.integrantes || 0}</td>
+                <td>${ciudadMostrar} <br><small style="color:#666;">${paisMostrar}</small></td>
+                <td><small>A:</small> ${accountMostrar}<br><small>C:</small> ${cityMostrar}</td>
+                <td>${fechaMostrar}</td>
+                <td style="text-align:center; font-weight:bold;">${integrantesMostrar}</td>
                 <td><span class="badge-fase ${fase.class}">${fase.texto}</span></td>
             `;
             tbody.appendChild(tr);
@@ -190,18 +195,18 @@
             let rawLat = eq.lat || eq.latitud || null;
             let rawLng = eq.lng || eq.longitud || null;
 
-            if(rawLat && rawLng) {
+            if(rawLat !== null && rawLng !== null && rawLat !== '' && rawLng !== '') {
                 let lat = parseFloat(rawLat.toString().replace(',', '.').trim());
                 let lng = parseFloat(rawLng.toString().replace(',', '.').trim());
 
-                if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                if (!isNaN(lat) && !isNaN(lng)) {
                     const icon = L.divIcon({
                         html: `<div class="chincheta-mapa" style="background-color: ${fase.color};"></div>`,
                         className: '', iconSize: [16, 16], iconAnchor: [8, 8]
                     });
 
                     const m = L.marker([lat, lng], { icon: icon })
-                        .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}, ${eq.pais || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
+                        .bindPopup(`<b>${eq.nombre}</b><br>📍 ${ciudadMostrar}, ${paisMostrar}<br>👥 Integrantes: ${integrantesMostrar}`);
                     marcadoresGroup.addLayer(m);
                 }
             }
@@ -213,7 +218,7 @@
         const filtrados = equipos.filter(eq => {
             if(!eq.nombre) return false;
             const faseInfo = obtenerInfoFase(eq);
-            const miembros = eq.integrantes ? eq.integrantes.toString() : '0';
+            const miembros = eq.integrantes !== undefined ? eq.integrantes.toString() : '0';
             
             return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, miembros, faseInfo.texto]
                 .join(' ').toLowerCase().includes(query);
