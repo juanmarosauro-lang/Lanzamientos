@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mapa Global de Equipos - Google Sheets</title>
+    <title>Visualizador Global de Equipos y Lanzamientos</title>
     
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
@@ -12,8 +12,6 @@
         :root {
             --primary: #2c3e50;
             --accent: #16a085;
-            --edit-mode: #2980b9;
-            --danger: #e74c3c;
             --bg: #f4f6f7;
             --text: #333;
             --fase0: #f1c40f; 
@@ -32,9 +30,150 @@
         .dot.f1 { background: var(--fase1); }
         .dot.f2 { background: var(--fase2); }
 
-        #map { height: 440px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 25px; background: #cbd5e1; }
-        .dashboard { display: grid; grid-template-columns: 1fr; gap: 25px; }
-        @media (min-width: 1100px) { .dashboard { grid-template-columns: 360px 1fr; } }
+        #map { height: 480px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 25px; background: #cbd5e1; z-index: 1; }
+        
+        .panel { background: white; padding: 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        h2 { color: var(--primary); font-size: 1.25rem; margin-top: 0; margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 8px; }
+
+        .search-box { width: 100%; padding: 14px 20px; margin-bottom: 15px; border: 2px solid #16a085; border-radius: 25px; box-sizing: border-box; font-size: 1rem; outline: none; box-shadow: 0 2px 8px rgba(22, 160, 133, 0.1); }
+        .table-container { overflow-x: auto; max-height: 600px; border: 1px solid #eee; border-radius: 8px; }
+        table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem; }
+        th { background: var(--primary); color: white; padding: 12px 10px; font-weight: 600; position: sticky; top: 0; z-index: 10; }
+        td { padding: 10px; border-bottom: 1px solid #eee; vertical-align: middle; }
+        tr:hover { background-color: #f8fafb; }
+
+        .badge-fase { padding: 4px 8px; border-radius: 12px; font-weight: bold; font-size: 0.75rem; display: inline-block; }
+        .badge-fase.f0 { background: #fff9e6; color: #b7950b; border: 1px solid var(--fase0); }
+        .badge-fase.f1 { background: #eafaf1; color: #27ae60; border: 1px solid var(--fase1); }
+        .badge-fase.f2 { background: #ebf5fb; color: #2980b9; border: 1px solid var(--fase2); }
+
+        .chincheta-mapa { width: 16px; height: 16px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 6px rgba(0,0,0,0.6); }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Buscador Avanzado y Mapa Global de Equipos</h1>
+
+    <div class="leyenda">
+        <div class="leyenda-item"><span class="dot f0"></span> Fase 0 (0-15 integrantes, No Lanzado)</div>
+        <div class="leyenda-item"><span class="dot f1"></span> Fase 1 (0-15 integrantes, Lanzado)</div>
+        <div class="leyenda-item"><span class="dot f2"></span> Fase 2 (15-25 integrantes, Lanzado)</div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="panel">
+        <h2>Consulta de Base de Datos (Sincronizada en Tiempo Real)</h2>
+        <input type="text" id="buscador" class="search-box" placeholder="🔍 Filtra lanzamientos por nombre, país, ciudad, encargado, fase...">
+        
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nombre de Equipo</th>
+                        <th>Ubicación</th>
+                        <th>Account / City</th>
+                        <th>Inicio</th>
+                        <th style="text-align:center">Integrantes</th>
+                        <th>Fase Actual</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-equipos"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    // Conexión directa y segura a tu SheetDB
+    const API_URL = "https://sheetdb.io/api/v1/pezvdn1fmt5ku";
+    let equipos = [];
+    const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
+
+    const map = L.map('map').setView([26.0, -45.0], 3);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+    let marcadoresActivos = [];
+
+    function obtenerInfoFase(eq) {
+        const ints = parseInt(eq.integrantes) || 0;
+        if (eq.lanzado === "no" || ints === 0) {
+            return { texto: "Fase 0", color: coloresFase.f0, class: "f0" };
+        } else if (ints > 0 && ints <= 15) {
+            return { texto: "Fase 1", color: coloresFase.f1, class: "f1" };
+        } else {
+            return { texto: "Fase 2", color: coloresFase.f2, class: "f2" };
+        }
+    }
+
+    function renderizarTodo(lista) {
+        const tbody = document.getElementById('tbody-equipos');
+        tbody.innerHTML = '';
+        
+        if (!lista || lista.length === 0 || (lista.length === 1 && !lista[0].id)) {
+            return;
+        }
+
+        lista.forEach(eq => {
+            if(!eq.nombre) return;
+            const fase = obtenerInfoFase(eq);
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${eq.nombre}</strong></td>
+                <td>${eq.ciudad || ''} <br><small style="color:#666;">${eq.pais || ''}</small></td>
+                <td><small>A:</small> ${eq.account || ''}<br><small>C:</small> ${eq.city || ''}</td>
+                <td>${eq.fecha || ''}</td>
+                <td style="text-align:center; font-weight:bold;">${eq.integrantes || 0}</td>
+                <td><span class="badge-fase ${fase.class}">${fase.texto}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        marcadoresActivos.forEach(m => map.removeLayer(m));
+        marcadoresActivos = [];
+        lista.forEach(eq => {
+            const lat = parseFloat(eq.lat);
+            const lng = parseFloat(eq.lng);
+            if (lat && lng && eq.nombre) {
+                const fase = obtenerInfoFase(eq);
+                const icon = L.divIcon({
+                    html: `<div class="chincheta-mapa" style="background-color: ${fase.color};"></div>`,
+                    className: '', iconSize: [16, 16], iconAnchor: [8, 8]
+                });
+                const m = L.marker([lat, lng], { icon: icon })
+                    .addTo(map)
+                    .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
+                marcadoresActivos.push(m);
+            }
+        });
+    }
+
+    async function cargarDatosDesdeNube() {
+        try {
+            const res = await fetch(API_URL);
+            equipos = await res.json();
+            if(!Array.isArray(equipos)) equipos = [];
+            renderizarTodo(equipos);
+        } catch (err) {
+            console.error("Error al conectar con la base de datos.");
+        }
+    }
+
+    document.getElementById('buscador').addEventListener('input', function(e) {
+        const query = e.target.value.toLowerCase().trim();
+        const filtrados = equipos.filter(eq => {
+            if(!eq.nombre) return false;
+            const faseInfo = obtenerInfoFase(eq);
+            return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, eq.integrantes.toString(), faseInfo.texto]
+                .join(' ').toLowerCase().includes(query);
+        });
+        renderizarTodo(filtrados);
+    });
+
+    cargarDatosDesdeNube();
+</script>
+</body>
+</html>        @media (min-width: 1100px) { .dashboard { grid-template-columns: 360px 1fr; } }
 
         .panel { background: white; padding: 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); height: fit-content; transition: all 0.3s ease; }
         .panel.editando { border: 2px solid var(--edit-mode); box-shadow: 0 4px 20px rgba(41, 128, 185, 0.2); }
