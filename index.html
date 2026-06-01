@@ -30,7 +30,7 @@
         .dot.f1 { background: var(--fase1); }
         .dot.f2 { background: var(--fase2); }
 
-        #map { height: 480px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 25px; background: #cbd5e1; z-index: 1; }
+        #map { height: 500px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 25px; background: #cbd5e1; z-index: 1; }
         
         .panel { background: white; padding: 22px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
         h2 { color: var(--primary); font-size: 1.25rem; margin-top: 0; margin-bottom: 15px; border-bottom: 2px solid #eee; padding-bottom: 8px; }
@@ -58,10 +58,161 @@
     <div class="leyenda">
         <div class="leyenda-item"><span class="dot f0"></span> Fase 0 (No Lanzado)</div>
         <div class="leyenda-item"><span class="dot f1"></span> Fase 1 (1-15 integrantes, Lanzado)</div>
-        <div class="leyenda-item"><span class="dot f2"></span> Fase 2 (15-25 integrantes, Lanzado)</div>
+        <div class="leyenda-item"><span class="dot f2"></span> Fase 2 (15+ integrantes, Lanzado)</div>
     </div>
 
     <div id="map"></div>
+
+    <div class="panel">
+        <h2>Consulta de Base de Datos (Sincronizada con Google Sheets)</h2>
+        <input type="text" id="buscador" class="search-box" placeholder="🔍 Filtra lanzamientos por nombre, país, ciudad, encargado, fase...">
+        
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nombre de Equipo</th>
+                        <th>Ubicación</th>
+                        <th>Account / City</th>
+                        <th>Inicio</th>
+                        <th style="text-align:center">Integrantes</th>
+                        <th>Fase Actual</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-equipos"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = "https://sheetdb.io/api/v1/pezvdn1fmt5ku";
+    let equipos = [];
+    const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
+
+    const map = L.map('map').setView([26.0, -25.0], 3);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+    let marcadoresActivos = [];
+
+    function obtenerInfoFase(eq) {
+        const ints = parseInt(eq.integrantes) || 0;
+        if (eq.lanzado === "no" || ints === 0) {
+            return { texto: "Fase 0", color: coloresFase.f0, class: "f0" };
+        } else if (ints > 0 && ints <= 15) {
+            return { texto: "Fase 1", color: coloresFase.f1, class: "f1" };
+        } else {
+            return { texto: "Fase 2", color: coloresFase.f2, class: "f2" };
+        }
+    }
+
+    // Buscador automático de coordenadas basado en Texto (Ciudad, País)
+    async function buscarCoordenadasDesdeTexto(ciudad, pais) {
+        if (!ciudad && !pais) return null;
+        try {
+            // Limpiamos textos como (México) o añadidos extraños
+            const ciudadLimpia = ciudad ? ciudad.replace(/\(.*?\)/g, '').trim() : '';
+            const paisLimpio = pais ? pais.replace(/\(.*?\)/g, '').trim() : '';
+            const query = `${ciudadLimpia}, ${paisLimpio}`.trim();
+            
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+            const respuesta = await fetch(url, { headers: { 'User-Agent': 'VisualizadorGlobalEquipos' } });
+            const datos = await respuesta.json();
+            
+            if (datos && datos.length > 0) {
+                return { lat: parseFloat(datos[0].lat), lng: parseFloat(datos[0].lon) };
+            }
+        } catch (e) {
+            console.error("Error al geolocalizar de fondo: ", e);
+        }
+        return null;
+    }
+
+    async function renderizarTodo(lista) {
+        const tbody = document.getElementById('tbody-equipos');
+        tbody.innerHTML = '';
+        
+        if (!lista || lista.length === 0) return;
+
+        // Renderizar filas de la tabla
+        lista.forEach(eq => {
+            if(!eq.nombre) return;
+            const fase = obtenerInfoFase(eq);
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${eq.nombre}</strong></td>
+                <td>${eq.ciudad || ''} <br><small style="color:#666;">${eq.pais || ''}</small></td>
+                <td><small>A:</small> ${eq.account || ''}<br><small>C:</small> ${eq.city || ''}</td>
+                <td>${eq.fecha || ''}</td>
+                <td style="text-align:center; font-weight:bold;">${eq.integrantes || 0}</td>
+                <td><span class="badge-fase ${fase.class}">${fase.texto}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Limpiar marcadores viejos
+        marcadoresActivos.forEach(m => map.removeLayer(m));
+        marcadoresActivos = [];
+
+        // Pintar marcadores en el mapa (Secuencial con retraso suave para respetar el servidor de mapas)
+        for (const eq of lista) {
+            if (!eq.nombre || !eq.ciudad) continue;
+            
+            let lat = parseFloat(eq.lat);
+            let lng = parseFloat(eq.lng);
+
+            // Si las celdas del Excel no tienen números válidos, la web los calcula sola
+            if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
+                const resultadoAuto = await buscarCoordenadasDesdeTexto(eq.ciudad, eq.pais);
+                if (resultadoAuto) {
+                    lat = resultadoAuto.lat;
+                    lng = resultadoAuto.lng;
+                } else {
+                    continue; // Pasa al siguiente si no encuentra la localización
+                }
+            }
+
+            const fase = obtenerInfoFase(eq);
+            const icon = L.divIcon({
+                html: `<div class="chincheta-mapa" style="background-color: ${fase.color};"></div>`,
+                className: '', iconSize: [16, 16], iconAnchor: [8, 8]
+            });
+
+            const m = L.marker([lat, lng], { icon: icon })
+                .addTo(map)
+                .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}, ${eq.pais || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
+            marcadoresActivos.push(m);
+            
+            // Pausa milimétrica para evitar saturar el geolocalizador automático
+            await new Promise(resolve => setTimeout(resolve, 150));
+        }
+    }
+
+    async function cargarDatosDesdeNube() {
+        try {
+            const res = await fetch(API_URL);
+            equipos = await res.json();
+            if(!Array.isArray(equipos)) equipos = [];
+            await renderizarTodo(equipos);
+        } catch (err) {
+            console.error("Error al conectar con SheetDB.");
+        }
+    }
+
+    document.getElementById('buscador').addEventListener('input', async function(e) {
+        const query = e.target.value.toLowerCase().trim();
+        const filtrados = equipos.filter(eq => {
+            if(!eq.nombre) return false;
+            const faseInfo = obtenerInfoFase(eq);
+            return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, eq.integrantes.toString(), faseInfo.texto]
+                .join(' ').toLowerCase().includes(query);
+        });
+        await renderizarTodo(filtrados);
+    });
+
+    cargarDatosDesdeNube();
+</script>
+</body>
+</html>    <div id="map"></div>
 
     <div class="panel">
         <h2>Consulta de Base de Datos (Sincronizada con Google Sheets)</h2>
