@@ -125,12 +125,13 @@
         return null;
     }
 
-    async function renderizarTodo(lista) {
+    function renderizarTodo(lista) {
         const tbody = document.getElementById('tbody-equipos');
         tbody.innerHTML = '';
         
         if (!lista || lista.length === 0) return;
 
+        // 1. Renderizar Tabla de forma inmediata
         lista.forEach(eq => {
             if(!eq.nombre) return;
             const fase = obtenerInfoFase(eq);
@@ -146,24 +147,12 @@
             tbody.appendChild(tr);
         });
 
+        // 2. Limpiar e insertar marcadores que ya tienen coordenadas mapeadas
         marcadoresActivos.forEach(m => map.removeLayer(m));
         marcadoresActivos = [];
 
-        for (const eq of lista) {
-            if (!eq.nombre || !eq.ciudad) continue;
-            
-            let lat = parseFloat(eq.lat);
-            let lng = parseFloat(eq.lng);
-
-            if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
-                const resultadoAuto = await buscarCoordenadasDesdeTexto(eq.ciudad, eq.pais);
-                if (resultadoAuto) {
-                    lat = resultadoAuto.lat;
-                    lng = resultadoAuto.lng;
-                } else {
-                    continue;
-                }
-            }
+        lista.forEach(eq => {
+            if (!eq.nombre || !eq.lat || !eq.lng) return;
 
             const fase = obtenerInfoFase(eq);
             const icon = L.divIcon({
@@ -171,13 +160,11 @@
                 className: '', iconSize: [16, 16], iconAnchor: [8, 8]
             });
 
-            const m = L.marker([lat, lng], { icon: icon })
+            const m = L.marker([eq.lat, eq.lng], { icon: icon })
                 .addTo(map)
                 .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}, ${eq.pais || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
             marcadoresActivos.push(m);
-            
-            await new Promise(resolve => setTimeout(resolve, 150));
-        }
+        });
     }
 
     async function cargarDatosDesdeNube() {
@@ -185,15 +172,61 @@
             const res = await fetch(API_URL);
             equipos = await res.json();
             if(!Array.isArray(equipos)) equipos = [];
-            await renderizarTodo(equipos);
+
+            // 1. Mapeo inicial rápido (para no hacer esperar al usuario con la pantalla en blanco)
+            equipos.forEach(eq => {
+                let lat = parseFloat(eq.lat);
+                let lng = parseFloat(eq.lng);
+                if (!isNaN(lat) && !isNaN(lng) && lat !== 0 && lng !== 0) {
+                    eq.lat = lat;
+                    eq.lng = lng;
+                } else {
+                    eq.lat = null;
+                    eq.lng = null;
+                }
+            });
+
+            // Pintamos inmediatamente lo que ya tiene coordenadas válidas
+            renderizarTodo(equipos);
+
+            // 2. Geolocalización asíncrona en segundo plano para las celdas vacías
+            for (let eq of equipos) {
+                if (eq.lat === null && eq.ciudad) {
+                    const resultadoAuto = await buscarCoordenadasDesdeTexto(eq.ciudad, eq.pais);
+                    if (resultadoAuto) {
+                        eq.lat = resultadoAuto.lat;
+                        eq.lng = resultadoAuto.lng;
+                        
+                        // Si el buscador no está siendo usado, refresca el mapa con el nuevo punto hallado
+                        const buscadorActivo = document.getElementById('buscador').value.trim();
+                        if (!buscadorActivo) {
+                            renderizarTodo(equipos);
+                        }
+                    }
+                    // Retraso controlado para respetar las políticas de uso de OpenStreetMap
+                    await new Promise(resolve => setTimeout(resolve, 150));
+                }
+            }
+
         } catch (err) {
-            console.error("Error al conectar con la API.");
+            console.error("Error al conectar con la API o procesar ubicaciones.");
         }
     }
 
-    document.getElementById('buscador').addEventListener('input', async function(e) {
+    document.getElementById('buscador').addEventListener('input', function(e) {
         const query = e.target.value.toLowerCase().trim();
         const filtrados = equipos.filter(eq => {
             if(!eq.nombre) return false;
             const faseInfo = obtenerInfoFase(eq);
-            return
+            const miembros = eq.integrantes ? eq.integrantes.toString() : '0';
+            
+            return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, miembros, faseInfo.texto]
+                .join(' ').toLowerCase().includes(query);
+        });
+        renderizarTodo(filtrados);
+    });
+
+    cargarDatosDesdeNube();
+</script>
+</body>
+</html>
