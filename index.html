@@ -95,7 +95,6 @@
     let direccionOrden = 'asc'; 
     const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
 
-    // Inicializar mapa interactivo centrado para ver tanto España como México adecuadamente
     const map = L.map('map').setView([26.0, -35.0], 3);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
     const marcadoresGroup = L.layerGroup().addTo(map);
@@ -268,7 +267,7 @@
         });
     }
 
-    // 🛠️ REPARACIÓN DEFINITIVA: Limpia el formato de Google Sheets sin romper la posición decimal original
+    // 🛠️ LÓGICA DE DETECCIÓN DINÁMICA: Basada en la longitud de dígitos enteros (Inmune a formatos corruptos de Sheets)
     function limpiarCoordenada(valorStr) {
         if (!valorStr) return null;
         let s = valorStr.toString().trim();
@@ -276,44 +275,31 @@
 
         let esNegativo = s.startsWith('-');
         
-        // Quitar el signo negativo momentáneamente si existe y remover espacios
-        s = s.replace('-', '');
+        // Extraer la parte entera original antes del primer punto para saber cómo la formateó Sheets
+        let partesOriginales = s.replace('-', '').split('.');
+        let digitosEnterosOriginales = partesOriginales[0].length;
 
-        // Contar cuántos puntos decimales/miles tiene la cadena original
-        let conteoPuntos = (s.match(/\./g) || []).length;
+        // Quitar absolutamente todo lo que no sea un número limpio
+        let limpio = s.replace(/[^0-9]/g, '');
+        if (limpio.length < 2) return null;
 
         let resultadoFlotante;
 
-        if (conteoPuntos === 1) {
-            // Caso estándar de España (ej: 371.773 -> 37.1773) o México Lat (ej: 206.597 -> 20.6597)
-            // Evaluamos la longitud de los dígitos. Las coordenadas reales tienen 2 o 3 enteros normalmente antes de mutar.
-            let limpio = s.replace('.', '');
-            
-            if (limpio.startsWith('37') || limpio.startsWith('38') || limpio.startsWith('39') || limpio.startsWith('40') || limpio.startsWith('41') || limpio.startsWith('42') || limpio.startsWith('43')) {
-                // Coordenadas latitud España (ej. 37.xxxx)
-                resultadoFlotante = parseFloat(limpio.substring(0,2) + '.' + limpio.substring(2));
-            } else if (limpio.startsWith('20') || limpio.startsWith('19') || limpio.startsWith('21')) {
-                // Coordenadas latitud México (ej. 20.xxxx)
-                resultadoFlotante = parseFloat(limpio.substring(0,2) + '.' + limpio.substring(2));
-            } else if (limpio.startsWith('35') || limpio.startsWith('3') || limpio.startsWith('4') || limpio.startsWith('5') || limpio.startsWith('6')) {
-                // Longitudes de España bajas (ej. -3.xxxx o -5.xxxx)
-                resultadoFlotante = parseFloat(limpio.substring(0,1) + '.' + limpio.substring(1));
-            } else {
-                // Por defecto si no cumple patrones geográficos evidentes, dividimos entre 10000 para corregir el punto de miles
-                resultadoFlotante = parseFloat(limpio) / 10000;
-            }
-        } else if (conteoPuntos > 1) {
-            // Caso extremo detectado en México Longitud (ej: 1.033.496 -> debe ser 103.3496)
-            let limpio = s.replace(/\./g, ''); // Quita todos los puntos
-            // Las longitudes de México empiezan por 103 o 102 (3 dígitos enteros)
-            resultadoFlotante = parseFloat(limpio.substring(0,3) + '.' + limpio.substring(3));
-        } else {
-            // Si viene ya limpio sin puntos anormales
-            resultadoFlotante = parseFloat(s);
+        // Si la parte entera original tenía 3 dígitos (ej: 371.773 -> 37.1773 o 206.597 -> 20.6597)
+        if (digitosEnterosOriginales === 3) {
+            resultadoFlotante = parseFloat(limpio.substring(0, 2) + '.' + limpio.substring(2));
+        } 
+        // Si tenía 4 dígitos en la parte entera (ej: México Longitud -1.033.496 -> que al quitar el menos son 4 enteros "1033")
+        else if (digitosEnterosOriginales === 4 || limpio.length >= 7 && (limpio.startsWith('102') || limpio.startsWith('103') || limpio.startsWith('99'))) {
+            resultadoFlotante = parseFloat(limpio.substring(0, 3) + '.' + limpio.substring(3));
+        } 
+        // Si ya venía bien formateado con 1 o 2 enteros nativos (ej: -3.5986 o 2.8214)
+        else {
+            resultadoFlotante = parseFloat(parseFloat(valorStr.replace(',', '.')).toFixed(6));
+            return isNaN(resultadoFlotante) ? null : resultadoFlotante;
         }
 
         if (esNegativo) resultadoFlotante = -resultadoFlotante;
-
         return isNaN(resultadoFlotante) ? null : resultadoFlotante;
     }
 
