@@ -56,12 +56,152 @@
     <h1>Buscador Avanzado y Mapa Global de Equipos</h1>
 
     <div class="leyenda">
-        <div class="leyenda-item"><span class="dot f0"></span> Fase 0 (0-15 integrantes, No Lanzado)</div>
-        <div class="leyenda-item"><span class="dot f1"></span> Fase 1 (0-15 integrantes, Lanzado)</div>
+        <div class="leyenda-item"><span class="dot f0"></span> Fase 0 (No Lanzado)</div>
+        <div class="leyenda-item"><span class="dot f1"></span> Fase 1 (1-15 integrantes, Lanzado)</div>
         <div class="leyenda-item"><span class="dot f2"></span> Fase 2 (15-25 integrantes, Lanzado)</div>
     </div>
 
     <div id="map"></div>
+
+    <div class="panel">
+        <h2>Consulta de Base de Datos (Sincronizada con Google Sheets)</h2>
+        <input type="text" id="buscador" class="search-box" placeholder="🔍 Filtra lanzamientos por nombre, país, ciudad, encargado, fase...">
+        
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Nombre de Equipo</th>
+                        <th>Ubicación</th>
+                        <th>Account / City</th>
+                        <th>Inicio</th>
+                        <th style="text-align:center">Integrantes</th>
+                        <th>Fase Actual</th>
+                    </tr>
+                </thead>
+                <tbody id="tbody-equipos"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+    const API_URL = "https://sheetdb.io/api/v1/pezvdn1fmt5ku";
+    let equipos = [];
+    const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
+
+    const map = L.map('map').setView([26.0, -45.0], 3);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
+    let marcadoresActivos = [];
+
+    function obtenerInfoFase(eq) {
+        const ints = parseInt(eq.integrantes) || 0;
+        if (eq.lanzado === "no" || ints === 0) {
+            return { texto: "Fase 0", color: coloresFase.f0, class: "f0" };
+        } else if (ints > 0 && ints <= 15) {
+            return { texto: "Fase 1", color: coloresFase.f1, class: "f1" };
+        } else {
+            return { texto: "Fase 2", color: coloresFase.f2, class: "f2" };
+        }
+    }
+
+    async function buscarCoordenadas(ciudad, pais) {
+        if (!ciudad || !pais) return null;
+        try {
+            const query = `${ciudad}, ${pais}`;
+            const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+            const respuesta = await fetch(url, { headers: { 'User-Agent': 'MapaEquiposApp' } });
+            const datos = await respuesta.json();
+            if (datos && datos.length > 0) {
+                return { lat: parseFloat(datos[0].lat), lng: parseFloat(datos[0].lon) };
+            }
+        } catch (e) {
+            console.error("Error buscando coordenadas para: " + ciudad, e);
+        }
+        return null;
+    }
+
+    async function renderizarTodo(lista) {
+        const tbody = document.getElementById('tbody-equipos');
+        tbody.innerHTML = '';
+        
+        if (!lista || lista.length === 0 || (lista.length === 1 && !lista[0].id)) {
+            return;
+        }
+
+        lista.forEach(eq => {
+            if(!eq.nombre) return;
+            const fase = obtenerInfoFase(eq);
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>${eq.nombre}</strong></td>
+                <td>${eq.ciudad || ''} <br><small style="color:#666;">${eq.pais || ''}</small></td>
+                <td><small>A:</small> ${eq.account || ''}<br><small>C:</small> ${eq.city || ''}</td>
+                <td>${eq.fecha || ''}</td>
+                <td style="text-align:center; font-weight:bold;">${eq.integrantes || 0}</td>
+                <td><span class="badge-fase ${fase.class}">${fase.texto}</span></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        marcadoresActivos.forEach(m => map.removeLayer(m));
+        marcadoresActivos = [];
+
+        for (const eq of lista) {
+            if (!eq.nombre) continue;
+            
+            let lat = parseFloat(eq.lat);
+            let lng = parseFloat(eq.lng);
+
+            // Si no hay coordenadas en el excel, el mapa las busca solo por el nombre de la ciudad y pais
+            if (isNaN(lat) || isNaN(lng) || lat === 0 || lng === 0) {
+                const coordsAuto = await buscarCoordenadas(eq.ciudad, eq.pais);
+                if (coordsAuto) {
+                    lat = coordsAuto.lat;
+                    lng = coordsAuto.lng;
+                } else {
+                    continue; // Si no encuentra la ciudad, salta al siguiente
+                }
+            }
+
+            const fase = obtenerInfoFase(eq);
+            const icon = L.divIcon({
+                html: `<div class="chincheta-mapa" style="background-color: ${fase.color};"></div>`,
+                className: '', iconSize: [16, 16], iconAnchor: [8, 8]
+            });
+            const m = L.marker([lat, lng], { icon: icon })
+                .addTo(map)
+                .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
+            marcadoresActivos.push(m);
+        }
+    }
+
+    async function cargarDatosDesdeNube() {
+        try {
+            const res = await fetch(API_URL);
+            equipos = await res.json();
+            if(!Array.isArray(equipos)) equipos = [];
+            await renderizarTodo(equipos);
+        } catch (err) {
+            console.error("Error al conectar.");
+        }
+    }
+
+    document.getElementById('buscador').addEventListener('input', async function(e) {
+        const query = e.target.value.toLowerCase().trim();
+        const filtrados = equipos.filter(eq => {
+            if(!eq.nombre) return false;
+            const faseInfo = obtenerInfoFase(eq);
+            return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, eq.integrantes.toString(), faseInfo.texto]
+                .join(' ').toLowerCase().includes(query);
+        });
+        await renderizarTodo(filtrados);
+    });
+
+    cargarDatosDesdeNube();
+</script>
+</body>
+</html>    <div id="map"></div>
 
     <div class="panel">
         <h2>Consulta de Base de Datos (Sincronizada en Tiempo Real)</h2>
