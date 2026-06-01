@@ -64,7 +64,7 @@
     <div id="map"></div>
 
     <div class="panel">
-        <h2>Consulta de Base de Datos (Sincronizada con Google Sheets)</h2>
+        <h2>Consulta de Base de Datos (Conexión Directa e Ilimitada por CSV)</h2>
         <input type="text" id="buscador" class="search-box" placeholder="🔍 Filtra lanzamientos por nombre, país, ciudad, encargado, fase...">
         
         <div class="table-container">
@@ -86,117 +86,5 @@
 </div>
 
 <script>
-    const API_URL = "https://sheetdb.io/api/v1/pezvdn1fmt5ku";
-    let equipos = [];
-    const coloresFase = { f0: '#f1c40f', f1: '#2ecc71', f2: '#3498db' };
-
-    // Inicialización limpia de Leaflet
-    const map = L.map('map').setView([26.0, -25.0], 3);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap' }).addTo(map);
-    
-    // Contenedor dinámico de marcadores para evitar duplicaciones o residuos en memoria
-    const marcadoresGroup = L.layerGroup().addTo(map);
-
-    function obtenerInfoFase(eq) {
-        const ints = parseInt(eq.integrantes) || 0;
-        if (eq.lanzado === "no" || ints === 0) {
-            return { texto: "Fase 0", color: coloresFase.f0, class: "f0" };
-        } else if (ints > 0 && ints <= 15) {
-            return { texto: "Fase 1", color: coloresFase.f1, class: "f1" };
-        } else {
-            return { texto: "Fase 2", color: coloresFase.f2, class: "f2" };
-        }
-    }
-
-    function renderizarTodo(lista) {
-        const tbody = document.getElementById('tbody-equipos');
-        tbody.innerHTML = '';
-        marcadoresGroup.clearLayers();
-        
-        if (!lista || lista.length === 0) return;
-
-        lista.forEach(eq => {
-            if(!eq.nombre) return;
-            const fase = obtenerInfoFase(eq);
-            
-            // 1. Inserción en Tabla
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td><strong>${eq.nombre}</strong></td>
-                <td>${eq.ciudad || ''} <br><small style="color:#666;">${eq.pais || ''}</small></td>
-                <td><small>A:</small> ${eq.account || ''}<br><small>C:</small> ${eq.city || ''}</td>
-                <td>${eq.fecha || ''}</td>
-                <td style="text-align:center; font-weight:bold;">${eq.integrantes || 0}</td>
-                <td><span class="badge-fase ${fase.class}">${fase.texto}</span></td>
-            `;
-            tbody.appendChild(tr);
-
-            // 2. Inserción de Chincheta en el Mapa (si las coordenadas son válidas)
-            if (eq.lat !== null && eq.lng !== null) {
-                const icon = L.divIcon({
-                    html: `<div class="chincheta-mapa" style="background-color: ${fase.color};"></div>`,
-                    className: '', iconSize: [16, 16], iconAnchor: [8, 8]
-                });
-
-                const m = L.marker([eq.lat, eq.lng], { icon: icon })
-                    .bindPopup(`<b>${eq.nombre}</b><br>📍 ${eq.ciudad || ''}, ${eq.pais || ''}<br>👥 Integrantes: ${eq.integrantes || 0}`);
-                marcadoresGroup.addLayer(m);
-            }
-        });
-    }
-
-    function filtrarEquipos() {
-        const query = document.getElementById('buscador').value.toLowerCase().trim();
-        const filtrados = equipos.filter(eq => {
-            if(!eq.nombre) return false;
-            const faseInfo = obtenerInfoFase(eq);
-            const miembros = eq.integrantes ? eq.integrantes.toString() : '0';
-            
-            return [eq.nombre, eq.ciudad, eq.pais, eq.account, eq.city, eq.fecha, miembros, faseInfo.texto]
-                .join(' ').toLowerCase().includes(query);
-        });
-        renderizarTodo(filtrados);
-    }
-
-    async function cargarDatosDesdeNube() {
-        try {
-            const res = await fetch(API_URL);
-            const datosRaw = await res.json();
-            
-            if(!Array.isArray(datosRaw)) {
-                equipos = [];
-                return;
-            }
-
-            equipos = datosRaw.map(eq => {
-                // Validación flexible: lee campos tanto en minúsculas (lat/lng) como en mayúsculas (LAT/LNG)
-                let rawLat = eq.lat || eq.LAT || null;
-                let rawLng = eq.lng || eq.LNG || null;
-
-                // Limpieza de formato en caso de que existan comas en el Excel
-                let latString = rawLat ? rawLat.toString().replace(',', '.') : '';
-                let lngString = rawLng ? rawLng.toString().replace(',', '.') : '';
-
-                let lat = parseFloat(latString);
-                let lng = parseFloat(lngString);
-
-                return {
-                    ...eq,
-                    lat: (!isNaN(lat) && lat !== 0) ? lat : null,
-                    lng: (!isNaN(lng) && lng !== 0) ? lng : null
-                };
-            });
-
-            // Renderizado único e instantáneo de todos los elementos
-            renderizarTodo(equipos);
-
-        } catch (err) {
-            console.error("Error al conectar con la API o procesar ubicaciones:", err);
-        }
-    }
-
-    document.getElementById('buscador').addEventListener('input', filtrarEquipos);
-    cargarDatosDesdeNube();
-</script>
-</body>
-</html>
+    // Enlace directo a tu Google Sheets (Formato CSV)
+    const CSV_URL = "
